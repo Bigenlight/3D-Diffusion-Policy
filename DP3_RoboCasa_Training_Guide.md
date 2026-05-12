@@ -10,7 +10,7 @@ FPVNet 리포의 DP3 (3D Diffusion Policy) 파이프라인으로 RoboCasa 24개 
 | # | 리포 | 역할 | 비고 |
 |---|------|------|------|
 | 1 | `ALRhub/FPVNet` | 학습 코드 본체 (메인) | - |
-| 2 | `ALRhub/custom_robocasa` | RoboCasa + robosuite fork + PC wrappers | submodule, init 완료 |
+| 2 | `ALRhub/custom_robocasa` | RoboCasa + robosuite fork + PC wrappers | - |
 | 3 | OpenAI CLIP (pip git+) | — | **DP3 불필요** (BESO 내장 CLIP 사용) |
 | 4 | pytorch3d (pip git+) | FPS 샘플링 | PC 전처리 + **평가 rollout 모두에 필수** (sim wrapper가 FPS 사용) |
 | 5 | SUGAR Pointnet2_PyTorch | — | **DP3 불필요** (FPV-SUGAR 전용, FPVNet `requirements.txt`에는 없음 / README §SUGAR에만 별도 설치) |
