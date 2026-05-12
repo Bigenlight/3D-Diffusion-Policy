@@ -101,7 +101,7 @@ flowchart LR
         State0 --> Concat0
         Concat0 -.FiLM.-> UNet0
         UNet0 --> A0
-        NoLang -.x.-> Concat0
+        NoLang -. ❌ .-> Concat0
     end
 
     subgraph FPVNetDP3 ["🟪 FPVNet DP3 (실제 채택)"]
