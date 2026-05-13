@@ -210,20 +210,73 @@ flowchart LR
 
 ---
 
-## 🚦 v1 실행 순서 (drawer-only smoke test)
+## 🖥️ GPU 활용 전략 (4× RTX A4000 16GB 가용)
 
-> 정확한 명령은 `DP3_RoboCasa_Training_Guide.md` 참조. 여기는 요약.
+**전제 사실**: 디퓨젼 모델 자체엔 단일 GPU 제약 없음 (Stable Diffusion 등 DDP 표준). PMP 페이퍼도 **4× RTX 6000 Ada batch 512**로 학습. 다만 **FPVNet 공개 release는 DDP 누락** (one-shot release, `device: "cuda"` 하드코드) — multi-GPU 학습은 코드 수정 필요.
+
+**16GB A4000 메모리**: batch 256은 OOM → **batch 128로 축소** 필수.
+
+### 3가지 옵션
+
+| 옵션 | 셋업 | 학습 | 산출물 | 코드 수정 |
+|---|---|---|---|---|
+| **B: 4-seed 병렬** ⭐ | 0 | **10-15h** | 1 task × **4 seed** (variance 확인) | 없음 (launcher만) |
+| A: DDP 가속 | 1-2일 (또는 accelerate 0.5일) | **3-5h** | 1 task × 1 seed | ~100 LoC |
+| C: 단일 GPU 1 process | 0 | 10-15h | 1 task × 1 seed | 없음 |
+
+### 권장 순서: **B → (의미있는 SR 확인 후) A**
+
+**B 먼저 가는 이유**:
+- DDP 디버깅 1-2일 vs overnight 10-15h → **overnight이 절대 시간 더 짧음**
+- 4-seed variance로 결과 **재현성** 검증 (single-seed 노이즈 배제)
+- FPVNet은 one-shot release라 DDP 추가 시 silent bug 위험 (normalizer fit이 rank 0만, CLIP freeze on each GPU 등)
+- B에서 task/setup 진짜 동작 확인 → 그 후 A로 가속하면 안전
+
+**A로 갈 조건**: B에서 ≥1 seed가 SR ≥30% 달성한 뒤, batch eff 256으로 더 끌어올리고 싶거나 다른 task 확장 시.
+
+### Option B 실행 명령
+
+```bash
+cd /path/to/FPVNet
+for i in 0 1 2 3; do
+  CUDA_VISIBLE_DEVICES=$((i+4)) python run.py --config-name=robocasa_dp3_config \
+    --multirun agents=dp3_agent trainers=dp3_trainer agent_name=dp3 \
+    agents/model=dp3/dp3_policy \
+    train_batch_size=128 \
+    scale_data=False use_full_point_cloud=False \
+    use_sampled_point_cloud=True use_segmented_point_cloud=False \
+    use_pc_color=False \
+    env_group=drawer seed=$i > /tmp/dp3_seed${i}.log 2>&1 &
+done
+wait
+```
+
+### A4000 VRAM 예산 (batch 128, 단일 task)
+
+Model ~1G + Optim 3G + Grad 1G + Activations ~8G + Normalizer fit ~0.5G = **~13 GB peak** (16GB 안에 안전 fit).
+
+### Option A 셋업 시 (참고)
+
+- **가장 간단**: HuggingFace `accelerate` wrap (`accelerator.prepare(...)`, ~30 LoC, 0.5일)
+- 수동 DDP: `torchrun --nproc_per_node=4` + `DistributedSampler` + `init_process_group` (~100 LoC, 1-2일)
+- 엣지: normalizer fit rank 0만 → broadcast / CLIP freeze 각 GPU / env_runner rank 0 only
+
+---
+
+## 🚦 v1 실행 순서 (drawer task, Option B)
+
+> 정확한 명령은 `DP3_RoboCasa_Training_Guide.md` 참조. 여기는 phase 흐름만.
 
 1. **환경** (1일): mamba py3.10 + torch 2.4 cu124 + FPVNet 의존성 + `custom_robocasa/install.sh`
 2. **데이터 다운로드** (30분~1h): `human_raw` 데이터셋
-3. **macros 설정**: `DATASET_BASE_PATH` 절대경로 입력
+3. **macros 설정**: `DATASET_BASE_PATH` 절대경로
 4. **PC 전처리** (drawer 2 task만, 1-2h): `dataset_states_to_obs --keep_full_pc --dont_store_image --dont_store_depth`
-5. **학습 + eval** (4-6h H100): `python run.py --config-name=robocasa_dp3_config --multirun [..overrides..] env_group=drawer seed=0`
-6. **결과 확인**: `wandb.log` 또는 stdout `Success rate: X` + hydra working_dir 로그
+5. **학습 + eval** (Option B, **10-15h**): 위의 4-seed 병렬 launcher 실행
+6. **결과 확인**: `wandb` 또는 stdout `Success rate: X` + hydra working_dir 로그 4개 비교
 
 **Go/no-go 게이트**:
-- P3 (학습 시작 후 1h): `bc_loss` 감소 확인. 안 떨어지면 BESO config로 잘못 들어간 것일 수 있음.
-- P4 (학습 완료): drawer 그룹 평균 SR ≥ 30% (PMP 페이퍼 53% 대비 보수적 기준)
+- P3 (학습 시작 후 1h): `bc_loss` 감소 확인. 안 떨어지면 BESO config로 잘못 들어간 것 (§🚨 함정 #1)
+- P4 (학습 완료): 4 seed 중 적어도 절반이 drawer 평균 SR ≥ 30% (PMP 53% 대비 보수적 기준). 모두 미달 시 → 데이터/PC 시각화 점검
 
 ---
 
